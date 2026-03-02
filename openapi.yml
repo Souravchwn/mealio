@@ -1,0 +1,791 @@
+openapi: "3.1.0"
+
+info:
+  title: Mealio API
+  version: "1.0.0"
+  description: |
+    **Mealio** — high-integrity automation platform for shared living (messes).
+    Social input via Telegram Bot. REST management via this API.
+
+    ## Authentication
+    Most endpoints require a **Bearer JWT** issued by `POST /api/auth/login`.
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    The JWT is a compact HS256-signed token. The `role` claim controls access:
+    | Role | Endpoints |
+    |------|-----------|
+    | `SYSTEM_ADMIN` | `/api/admin/**` + all authenticated endpoints |
+    | _(any authenticated)_ | `/api/expenses/**`, `/api/cook/**` |
+    | _(public)_ | `/api/auth/login`, `/api/telegram/**` |
+
+    ## Error Schema
+    All error responses share a common shape:
+    ```json
+    {
+      "status": 404,
+      "message": "Mess not found",
+      "path": "/api/expenses",
+      "timestamp": "2026-03-02T17:00:00Z",
+      "fieldErrors": null
+    }
+    ```
+  contact:
+    name: Mealio Engineering
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://mealio.up.railway.app
+    description: Production (Railway)
+
+# ── Security scheme ────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        HS256-signed JWT obtained from `POST /api/auth/login`.
+        Include as `Authorization: Bearer <token>` header.
+
+  # ── Reusable schemas ─────────────────────────────────────────────────────────
+  schemas:
+
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: sysadmin
+        password:
+          type: string
+          format: password
+          example: ChangeMe_Prod!
+
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: Compact HS256 JWT
+          example: eyJhbGciOiJIUzI1NiJ9...
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: Token lifetime in seconds
+          example: 86400
+        issuedAt:
+          type: string
+          format: date-time
+          example: "2026-03-02T17:20:00Z"
+
+    # ── Expense ───────────────────────────────────────────────────────────────
+    ExpenseCategory:
+      type: string
+      enum: [PROTEIN, CARB, VEGETABLE, SPICE, OIL, UTILITY, OTHER]
+      description: |
+        Expense category for AI/economic analytics:
+        - `PROTEIN` — meat, fish, eggs, lentils
+        - `CARB` — rice, flour, bread
+        - `VEGETABLE`
+        - `SPICE`
+        - `OIL`
+        - `UTILITY` — gas, electricity
+        - `OTHER`
+
+    ExpenseRequest:
+      type: object
+      required: [messId, memberId, amount, category, date]
+      properties:
+        messId:
+          type: string
+          format: uuid
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        memberId:
+          type: string
+          format: uuid
+          description: UUID of the manager recording the expense
+          example: "4fa85f64-5717-4562-b3fc-2c963f66afa7"
+        amount:
+          type: number
+          format: decimal
+          minimum: 0.01
+          example: 350.00
+        category:
+          $ref: "#/components/schemas/ExpenseCategory"
+        description:
+          type: string
+          maxLength: 255
+          example: "Chicken from the bazaar"
+        date:
+          type: string
+          format: date
+          example: "2026-03-02"
+
+    ExpenseResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        messId:
+          type: string
+          format: uuid
+        memberId:
+          type: string
+          format: uuid
+        memberName:
+          type: string
+          example: "Rahul Ahmed"
+        amount:
+          type: number
+          format: decimal
+          example: 350.00
+        category:
+          $ref: "#/components/schemas/ExpenseCategory"
+        description:
+          type: string
+          example: "Chicken from the bazaar"
+        date:
+          type: string
+          format: date
+          example: "2026-03-02"
+        createdAt:
+          type: string
+          format: date-time
+        liveMealRate:
+          type: number
+          format: decimal
+          description: Current meal rate computed after this entry
+
+    MealRateResponse:
+      type: object
+      properties:
+        messId:
+          type: string
+          format: uuid
+        yearMonth:
+          type: string
+          example: "2026-03"
+        mealRate:
+          type: number
+          format: decimal
+          example: 42.75
+
+    # ── Cook ──────────────────────────────────────────────────────────────────
+    HeadcountResponse:
+      type: object
+      properties:
+        messId:
+          type: string
+          description: UUID string of the mess
+        messName:
+          type: string
+          example: "Dhaka Bachelor Mess"
+        date:
+          type: string
+          format: date
+          example: "2026-03-02"
+        memberCount:
+          type: integer
+          description: Members with at least 1 meal today
+          example: 8
+        guestCount:
+          type: integer
+          description: Total guest meals today
+          example: 2
+        totalHeadcount:
+          type: integer
+          description: memberCount + guestCount
+          example: 10
+        source:
+          type: string
+          enum: [firebase, database]
+          description: Cache source indicator
+
+    # ── Admin ─────────────────────────────────────────────────────────────────
+    DailyLogDto:
+      type: object
+      properties:
+        logId:
+          type: string
+          format: uuid
+        memberId:
+          type: string
+          format: uuid
+        memberName:
+          type: string
+        date:
+          type: string
+          format: date
+        breakfast:
+          type: boolean
+        lunch:
+          type: boolean
+        dinner:
+          type: boolean
+        guestCount:
+          type: integer
+        frozen:
+          type: boolean
+          description: True if the log was frozen by month-close
+
+    MemberRow:
+      type: object
+      properties:
+        memberId:
+          type: string
+          format: uuid
+        memberName:
+          type: string
+        totalMeals:
+          type: integer
+        totalCost:
+          type: number
+          format: decimal
+        balance:
+          type: number
+          format: decimal
+          description: "Positive = owed money, negative = owes money"
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyLogDto"
+
+    MonthMatrixResponse:
+      type: object
+      properties:
+        messId:
+          type: string
+          format: uuid
+        yearMonth:
+          type: string
+          example: "2026-03"
+        totalExpense:
+          type: number
+          format: decimal
+        mealRate:
+          type: number
+          format: decimal
+        totalMeals:
+          type: integer
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberRow"
+
+    CloseMonthRequest:
+      type: object
+      required: [messId, adminId, yearMonth]
+      properties:
+        messId:
+          type: string
+          format: uuid
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        adminId:
+          type: string
+          format: uuid
+          description: UUID of the mess admin initiating the close
+          example: "4fa85f64-5717-4562-b3fc-2c963f66afa7"
+        yearMonth:
+          type: string
+          pattern: "^\\d{4}-\\d{2}$"
+          example: "2026-02"
+
+    MonthCloseResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Snapshot ID
+        yearMonth:
+          type: string
+          example: "2026-02"
+        totalExpense:
+          type: number
+          format: decimal
+        mealRate:
+          type: number
+          format: decimal
+        totalMeals:
+          type: integer
+        status:
+          type: string
+          enum: [OPEN, CLOSED]
+        closedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Telegram ──────────────────────────────────────────────────────────────
+    TelegramUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        is_bot:
+          type: boolean
+        first_name:
+          type: string
+        username:
+          type: string
+        language_code:
+          type: string
+
+    TelegramChat:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        type:
+          type: string
+          enum: [private, group, supergroup, channel]
+
+    TelegramMessage:
+      type: object
+      properties:
+        message_id:
+          type: integer
+        from:
+          $ref: "#/components/schemas/TelegramUser"
+        chat:
+          $ref: "#/components/schemas/TelegramChat"
+        date:
+          type: integer
+          description: Unix timestamp
+        text:
+          type: string
+
+    TelegramUpdate:
+      type: object
+      required: [update_id]
+      properties:
+        update_id:
+          type: integer
+          format: int64
+        message:
+          $ref: "#/components/schemas/TelegramMessage"
+
+    # ── Error ─────────────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 404
+        message:
+          type: string
+          example: "Mess not found"
+        path:
+          type: string
+          example: "/api/expenses"
+        timestamp:
+          type: string
+          format: date-time
+        fieldErrors:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+          description: Populated only for 400 validation errors
+
+  # ── Reusable responses ───────────────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: 401
+            message: "Full authentication is required to access this resource"
+            path: "/api/expenses"
+            timestamp: "2026-03-02T17:20:00Z"
+            fieldErrors: null
+
+    Forbidden:
+      description: Authenticated but insufficient role
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: 403
+            message: "Access Denied"
+            path: "/api/admin/matrix"
+            timestamp: "2026-03-02T17:20:00Z"
+            fieldErrors: null
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Conflict:
+      description: Business rule conflict (cut-off exceeded, month already closed, optimistic lock)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    ValidationError:
+      description: Input validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: 400
+            message: "Validation failed"
+            path: "/api/expenses"
+            timestamp: "2026-03-02T17:20:00Z"
+            fieldErrors:
+              amount: "Amount must be positive"
+              date: "date is required"
+
+# ── Default security (overridden per-operation where needed) ──────────────────
+security:
+  - BearerAuth: []
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+paths:
+
+  # ═══ Auth ════════════════════════════════════════════════════════════════════
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Admin login — issue JWT
+      description: |
+        Validates system-admin credentials (configured via `JWT_ADMIN_USERNAME` /
+        `JWT_ADMIN_PASSWORD` environment variables) and issues a signed HS256 JWT.
+
+        **No registration endpoint exists.** The system admin account is provisioned
+        entirely through environment configuration.
+      operationId: adminLogin
+      security: []           # Public endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: 401
+                message: "Invalid credentials"
+                path: "/api/auth/login"
+                timestamp: "2026-03-02T17:20:00Z"
+                fieldErrors: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  # ═══ Expenses ═════════════════════════════════════════════════════════════════
+  /api/expenses:
+    post:
+      tags: [Expenses]
+      summary: Add expense
+      description: Records a new bazaar expense for the mess.
+      operationId: addExpense
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseRequest"
+      responses:
+        "201":
+          description: Expense created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExpenseResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+    get:
+      tags: [Expenses]
+      summary: List expenses
+      description: Returns all expenses for a given mess in a given month.
+      operationId: getExpenses
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: messId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        - name: yearMonth
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+          description: "`YYYY-MM` format. Defaults to current month."
+          example: "2026-03"
+      responses:
+        "200":
+          description: List of expenses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExpenseResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/expenses/meal-rate:
+    get:
+      tags: [Expenses]
+      summary: Get live meal rate
+      description: |
+        Returns the current live meal rate (total expense ÷ total meals) for the
+        given mess and month.
+      operationId: getMealRate
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: messId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: yearMonth
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+          example: "2026-03"
+      responses:
+        "200":
+          description: Live meal rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MealRateResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ═══ Cook ═════════════════════════════════════════════════════════════════════
+  /api/cook/headcount:
+    get:
+      tags: [Cook]
+      summary: Get today's headcount
+      description: |
+        Returns today's headcount for the cook's dashboard.
+        Data is served from Firebase Realtime Database (cache) with PostgreSQL fallback.
+      operationId: getHeadcount
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: messId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Headcount for today
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeadcountResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ═══ Admin ════════════════════════════════════════════════════════════════════
+  /api/admin/matrix:
+    get:
+      tags: [Admin]
+      summary: Get month matrix
+      description: |
+        **Requires `SYSTEM_ADMIN` role.**
+
+        Returns the full admin matrix: every member × every day of the month.
+        Includes breakfast / lunch / dinner / guest status, running totals and balances.
+      operationId: getMonthMatrix
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: messId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: yearMonth
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+          description: "`YYYY-MM` format. Defaults to current month."
+          example: "2026-03"
+      responses:
+        "200":
+          description: Full month matrix
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthMatrixResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/close-month:
+    post:
+      tags: [Admin]
+      summary: Close a month
+      description: |
+        **Requires `SYSTEM_ADMIN` role.**
+
+        Finalises a calendar month:
+        1. Calculates the definitive meal rate
+        2. Settles each member's balance
+        3. Persists a `MonthlySnapshot` (status → `CLOSED`)
+
+        ⚠️ **Irreversible** — once a month is closed it cannot be re-opened.
+      operationId: closeMonth
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseMonthRequest"
+      responses:
+        "200":
+          description: Month successfully closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthCloseResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ═══ Telegram ═════════════════════════════════════════════════════════════════
+  /api/telegram/webhook:
+    post:
+      tags: [Telegram]
+      summary: Telegram webhook receiver
+      description: |
+        Receives Telegram Update payloads forwarded by the Telegram Bot API.
+
+        **Public endpoint** — Telegram sends no Authorization header.
+
+        Register your webhook:
+        ```
+        curl "https://api.telegram.org/bot{TOKEN}/setWebhook?url=https://your-domain/api/telegram/webhook"
+        ```
+
+        Supported bot commands (sent as `message.text`):
+        | Command | Effect |
+        |---------|--------|
+        | `/meal on` | Mark all 3 meals |
+        | `/meal off` | Mark no meals |
+        | `/meal breakfast` | Toggle breakfast |
+        | `/meal lunch` | Toggle lunch |
+        | `/meal dinner` | Toggle dinner |
+        | `/meal guest 2` | Add 2 guest meals |
+
+        This endpoint **always returns HTTP 200** to prevent Telegram retry storms.
+      operationId: telegramWebhook
+      security: []     # Public — Telegram does not send auth headers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramUpdate"
+      responses:
+        "200":
+          description: Always 200 (reply is sent back via Telegram Bot API)
+
+  /api/telegram/health:
+    get:
+      tags: [Telegram]
+      summary: Bot health check
+      description: Simple liveness probe. No auth required.
+      operationId: telegramHealth
+      security: []     # Public liveness probe
+      responses:
+        "200":
+          description: Bot is running
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Mealio Telegram Bot is live ✅"
+
+# ── Tag descriptions ────────────────────────────────────────────────────────────
+tags:
+  - name: Auth
+    description: System admin authentication (JWT issuance)
+  - name: Expenses
+    description: Bazaar expense management — FR-2
+  - name: Cook
+    description: Cook dashboard headcount — FR-3
+  - name: Admin
+    description: Admin matrix and month-close operations — FR-4 (SYSTEM_ADMIN role required)
+  - name: Telegram
+    description: Telegram bot webhook adapter (public)

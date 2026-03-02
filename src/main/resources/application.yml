@@ -49,3 +49,12 @@ mealio:
 
   # Cut-off grace period in minutes (used if MessSettings not yet configured)
   default-cutoff-time: "21:00"
+
+  # ── Admin JWT ────────────────────────────────────────────────────────────────
+  # MUST be overridden in production via JWT_SECRET env var (min 64 hex chars).
+  # The system-admin credentials are read from JWT_ADMIN_USERNAME / JWT_ADMIN_PASSWORD.
+  jwt:
+    secret: ${JWT_SECRET:404e635266556a586e3272357538782f413f4428472b4b6250645367566b5970}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}   # 24 h default
+    admin-username: ${JWT_ADMIN_USERNAME:sysadmin}
+    admin-password: ${JWT_ADMIN_PASSWORD:ChangeMe_Prod!}
