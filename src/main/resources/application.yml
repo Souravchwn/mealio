@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: mealio
+
+  # ─── PostgreSQL / Neon ────────────────────────────────────────────────────────
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/mealio}
+    username: ${DB_USERNAME:mealio}
+    password: ${DB_PASSWORD:mealio}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update          # auto-migrate schema; switch to validate in prod
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: public
+    open-in-view: false
+
+  # ─── Jackson ──────────────────────────────────────────────────────────────────
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# ─── Server ───────────────────────────────────────────────────────────────────
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+# ─── Firebase ─────────────────────────────────────────────────────────────────
+mealio:
+  firebase:
+    service-account-path: ${FIREBASE_SA_PATH:classpath:firebase-service-account.json}
+    database-url: ${FIREBASE_DB_URL:https://your-project-default-rtdb.firebaseio.com/}
+    enabled: ${FIREBASE_ENABLED:false}   # set true once credentials are real
+
+  # ── Telegram Bot ─────────────────────────────────────────────────────────────
+  telegram:
+    # Get this from @BotFather: /newbot → copy the token
+    bot-token: ${TELEGRAM_BOT_TOKEN:REPLACE_WITH_YOUR_BOT_TOKEN}
+    # Optional: your bot's @username for mention-stripping in groups
+    bot-username: ${TELEGRAM_BOT_USERNAME:MealioBot}
+
+  # Cut-off grace period in minutes (used if MessSettings not yet configured)
+  default-cutoff-time: "21:00"
